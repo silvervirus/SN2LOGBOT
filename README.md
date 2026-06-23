@@ -3,7 +3,7 @@ a bot to check Subnautica2 , Stable Belowzero and Subnautica , legacy Subnautica
 To get your Discord Log Checker bot running from scratch, follow this setup guide. This covers everything from creating the bot in Discord to installing the necessary Python tools.
 Discord Game Log Checker
 
-AFeatures
+Features
 
 !LogCheck: Analyzes a log file to extract mod information and version data.
 
