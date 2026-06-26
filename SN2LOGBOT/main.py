@@ -23,7 +23,11 @@ EXCLUDED_MODS = [
     "EventViewerMod", 
     "LineTraceMod", 
     "jsbLuaProfilerMod", 
-    "BPModLoaderMod"
+    "BPModLoaderMod",
+    "ConsoleEnabler",
+    "CheatManagerEnabler",
+    "Adjustable Lights"
+    
 ]
 
 def extract_mod_name(path_string):
@@ -100,13 +104,13 @@ async def process_log(ctx, check_mode):
                         if m: mods_dict[m.group(1)] = "(SDF)"
                     elif "Mod '" in line and "has enabled" in line:
                         m = extract_mod_name(line.split("'")[1])
-                        if m not in mods_dict: mods_dict[m] = "(Mod)"
+                        if m not in mods_dict: mods_dict[m] = "(Enabled)"
                     
                     lua_match = re.search(r"\[Lua\]\s?\[([^\]]+)\]", line)
                     if lua_match:
                         m = extract_mod_name(lua_match.group(1))
                         if m.upper() not in ["STATUS", "INFO", "LUA", "MOD", "WARNING"] and m not in mods_dict:
-                            mods_dict[m] = "(Lua/BP)"
+                            mods_dict[m] = "(Lua)"
                 
                 msg = f"**Environment:** Subnautica 2 (UE4SS v{version})\n**Path:** `{install_path}`"
                 if "3.0.1" not in version: msg += sn2_update_notice
