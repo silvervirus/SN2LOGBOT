@@ -17,27 +17,46 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
-async def send_mod_list(ctx, mods, label):
-    """Always sends mod list as a file."""
-    if not mods:
-        await ctx.send(f"**{label}:** No mods identified.")
-        return
-        
-    with open("mod_list.txt", "w", encoding="utf-8") as f:
-        f.write("\n".join(sorted(list(set(mods)))))
+# List of mods to exclude from the final report
+EXCLUDED_MODS = [
+    "KismetDebuggerMod", 
+    "EventViewerMod", 
+    "LineTraceMod", 
+    "jsbLuaProfilerMod", 
+    "BPModLoaderMod"
+]
+
+def extract_mod_name(path_string):
+    """Cleans paths to find the mod name, stripping numeric IDs and folder prefixes."""
+    clean = re.sub(r'.*\/mods\/(\d+\/)?', '', path_string)
+    return clean.split('/')[0].split('\\')[0]
+
+async def send_mod_list(ctx, mods_dict, label, validations=None):
+    """Sends a text file containing the list of detected mods and validation warnings."""
+    # Filter out excluded mods before reporting
+    filtered_mods = {k: v for k, v in mods_dict.items() if k not in EXCLUDED_MODS}
     
-    await ctx.send(f"**{label} ({len(set(mods))} unique mods found):**", file=discord.File("mod_list.txt"))
+    if not filtered_mods and not validations:
+        await ctx.send(f"**{label}:** No non-default mods identified.")
+        return
+    
+    lines = [f"{name} {cat}" for name, cat in sorted(filtered_mods.items())]
+    if validations:
+        lines.append("\n--- Mod Validation Warnings ---")
+        lines.extend(validations)
+    
+    with open("mod_list.txt", "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    
+    await ctx.send(f"**{label} ({len(filtered_mods)} unique mods found):**", file=discord.File("mod_list.txt"))
     os.remove("mod_list.txt")
 
 async def send_errors_as_file(ctx, errors):
-    """Writes errors to Errors.txt and sends it."""
     if not errors:
         await ctx.send("No errors found! ✅")
         return
-    
     with open("Errors.txt", "w", encoding="utf-8") as f:
         f.write("\n".join(errors))
-        
     await ctx.send(f"**Errors found ({len(errors)}):**", file=discord.File("Errors.txt"))
     os.remove("Errors.txt")
 
@@ -54,68 +73,53 @@ async def process_log(ctx, check_mode):
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        sn1_update_notice = "\n⚠️ *Note: You are currently running an older version. Please update to BepInEx 5.4.23.5 and Nautilus (v1.0.0-pre.51).*"
-        sn2_update_notice = "\n⚠️ *Note: Ensure you are using the latest version of UE4SS (v3.0.1 recommended).*"
+        sn1_update_notice = "\n⚠️ *Note: Update to BepInEx 5.4.23.5 and the latest Nautilus.*"
+        sn2_update_notice = "\n⚠️ *Note: Ensure you are using the latest version of UE4SS (v3.0.1+).*"
+        source_code_found = re.search(r"[\w\.\-\/]+\.cs", content, re.IGNORECASE)
 
-        # FIXED: Only flag .cs files found inside modding directories to prevent false positives
-        source_code_found = re.search(r"(?:plugins|mods|BepInEx|UE4SS)[^\\/]*[\\/]+.*\.cs", content, re.IGNORECASE)
-        
         if "UE4SS" in content:
             version_line = next((line for line in content.splitlines() if "UE4SS - v" in line), "")
-            version = version_line.split("UE4SS - ")[1].strip() if version_line else "Unknown"
+            version = version_line.split("UE4SS - ")[1].split(" ")[0].strip() if version_line else "Unknown"
             install_path = next((line.split("Loading mods from:")[1].strip() for line in content.splitlines() if "Loading mods from:" in line), "Unknown")
             
             if check_mode == "errors":
                 errors = [l.strip() for l in content.splitlines() if any(x in l for x in ["[Error]", "[Warning]", "failed"])]
                 await send_errors_as_file(ctx, errors)
             else:
-                mods = []
+                mods_dict = {}
+                validations = []
                 for line in content.splitlines():
-                    # Handle C++ mods
-                    if "Starting C++ mod" in line:
-                        parts = line.split("'")
-                        if len(parts) > 1: mods.append(f"{parts[1]} (C++)")
+                    if "[Lua] [WARNING]" in line and "folder detected" in line:
+                        validations.append(line.split("[Lua] [WARNING]")[1].strip())
                     
-                    # Handle Specific Mod 'Name' enabled pattern
+                    if "Starting C++ mod" in line:
+                        m = extract_mod_name(line.split("'")[1])
+                        mods_dict[m] = "(C++)"
+                    elif "SDF folder found in mod" in line:
+                        m = re.search(r"found in mod ([a-zA-Z0-9_\-\.]+)", line)
+                        if m: mods_dict[m.group(1)] = "(SDF)"
                     elif "Mod '" in line and "has enabled" in line:
-                        m = line.split("'")[1]
-                        if m == "SDF": mods.append(f"{m} (C++)")
-                        elif m == "FileTree": mods.append(f"{m} (Lua/BP)")
-                        else: mods.append(f"{m} (Mod)")
-                        
-                    lua_match = re.search(r"\[Lua\]\s?\[(\w+)\]", line)
-                    if lua_match and lua_match.group(1).lower() not in ["lua", "mod"]:
-                        mods.append(f"{lua_match.group(1)} (Lua/BP)")
+                        m = extract_mod_name(line.split("'")[1])
+                        if m not in mods_dict: mods_dict[m] = "(Mod)"
+                    
+                    lua_match = re.search(r"\[Lua\]\s?\[([^\]]+)\]", line)
+                    if lua_match:
+                        m = extract_mod_name(lua_match.group(1))
+                        if m.upper() not in ["STATUS", "INFO", "LUA", "MOD", "WARNING"] and m not in mods_dict:
+                            mods_dict[m] = "(Lua/BP)"
                 
-                msg = f"**UE4SS Version:** {version}\n**UE4SS Install Path:** `{install_path}`"
-                if source_code_found:
-                    msg += "\n\n⚠️ **Source Code Detected:** Detected `.cs` files in your mod folder. Ensure you have installed the *compiled* mod (`.dll`)."
-
+                msg = f"**Environment:** Subnautica 2 (UE4SS v{version})\n**Path:** `{install_path}`"
+                if "3.0.1" not in version: msg += sn2_update_notice
+                if source_code_found: msg += "\n\n⚠️ **Source Code Detected:** Detected `.cs` files. Ensure you have installed the *compiled* mod (`.dll`)."
                 await ctx.send(msg)
-                await send_mod_list(ctx, mods, "Detected Mods")
+                await send_mod_list(ctx, mods_dict, "Detected Mods", validations)
 
         elif "BepInEx" in content:
-            lines = content.splitlines()
-            bepinex_ver = next((line.split("BepInEx ")[1].split(" -")[0] for line in lines if "BepInEx" in line), "Unknown")
-            is_legacy = "QModManager" in content
-            
-            if check_mode == "errors":
-                errors = [l.strip() for l in lines if any(x in l for x in ["Error", "Exception", "failed"])]
-                await send_errors_as_file(ctx, errors)
-            else:
-                plugins = [line.split("Loading [")[1].split("]")[0] for line in lines if "Loading [" in line]
-                msg = f"**BepInEx Version:** {bepinex_ver}"
-                if not is_legacy:
-                    msg += f" (Update recommended to 5.4.23.5)" + sn1_update_notice
-                else:
-                    msg += " (Legacy QMod/BepInEx Environment)"
-                
-                if source_code_found:
-                    msg += "\n\n⚠️ **Source Code Detected:** Detected `.cs` files in your mod folder. Ensure you have installed the *compiled* mod (`.dll`)."
-
-                await ctx.send(msg)
-                await send_mod_list(ctx, [f"{p} (BepInEx)" for p in plugins], "Plugins found")
-
+            plugins = {extract_mod_name(l.split("Loading [")[1].split("]")[0]): "(BepInEx)" for l in content.splitlines() if "Loading [" in l}
+            await ctx.send(f"**Environment:** Subnautica 1 / Below Zero (BepInEx){sn1_update_notice}")
+            await send_mod_list(ctx, plugins, "Plugins found")
+        else:
+            await ctx.send("Unknown log format.")
     finally:
         if os.path.exists(file_path): os.remove(file_path)
 
@@ -127,7 +131,6 @@ async def chkers(ctx): await process_log(ctx, "errors")
 
 @bot.command(name="help")
 async def help(ctx):
-    help_text = "**Available Commands:**\n`!chkers` - Scans log for errors.\n`!logchk` - Displays mod/plugin info.\n`!help` - Shows this list."
-    await ctx.send(help_text)
+    await ctx.send("**Available Commands:**\n`!chkers` - Scans log for errors.\n`!logchk` - Analyzes log and displays mod info.")
 
 bot.run(TOKEN)
