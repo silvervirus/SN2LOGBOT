@@ -26,7 +26,8 @@ EXCLUDED_MODS = [
     "BPModLoaderMod",
     "ConsoleEnabler",
     "CheatManagerEnabler",
-    "Adjustable Lights"
+    "Adjustable Lights",
+    "Inspect Tools"
     
 ]
 
