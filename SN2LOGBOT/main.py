@@ -128,7 +128,7 @@ async def process_log(ctx, check_mode):
                         if m not in mods_dict: 
                             mods_dict[m] = "(Lua or C++)"
                 
-                msg = f"**Environment:** Subnautica 2 (UE4SS v{version})\n**Path:** `{install_path}`"
+                msg = f"**Environment:** Subnautica 2 (UE4SS {version})\n**Path:** `{install_path}`"
                 if "3.0.1" not in version: msg += sn2_ue_notice
                 if source_code_found: msg += "\n\n⚠️ **Source Code Detected:** Detected `.cs` files. Ensure you have installed the *compiled* mod (`.dll`)."
                 await ctx.send(msg)
