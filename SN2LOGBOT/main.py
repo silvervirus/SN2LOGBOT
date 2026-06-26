@@ -26,14 +26,22 @@ EXCLUDED_MODS = [
     "BPModLoaderMod",
     "ConsoleEnabler",
     "CheatManagerEnabler",
-    "Adjustable Lights",
-    "Inspect Tools"
+    "AdjustableLights",  
+    "Inspect Tools",
+    "ConsoleCommandsMod",
+    "ConsoleEnablerMod",
+    "BPML_GenericFunctions",
+    "CheatManagerEnablerMod"
+    
 ]
 
 def extract_mod_name(path_string):
     """Cleans paths to find the mod name, stripping numeric IDs and folder prefixes."""
     clean = re.sub(r'.*\/mods\/(\d+\/)?', '', path_string)
-    return clean.split('/')[0].split('\\')[0]
+    # Replace windows backslashes with forward slashes first, then split safely
+    clean = clean.replace('\\', '/')
+    parts = clean.split('/')
+    return parts[0].strip()
 
 async def send_mod_list(ctx, mods_dict, label, validations=None):
     """Sends a text file containing the list of detected mods and validation warnings."""
@@ -77,7 +85,7 @@ async def process_log(ctx, check_mode):
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        sn2_update_notice = "\n⚠️ *Note: Ensure you are using the latest version of UE4SS (v3.0.1+).*"
+        sn2_ue_notice = "\n⚠️ *Note: Ensure you are using the latest version of UE4SS (v3.0.1+).*"
         source_code_found = re.search(r"[\w\.\-\/]+\.cs", content, re.IGNORECASE)
 
         if "UE4SS" in content:
@@ -95,24 +103,33 @@ async def process_log(ctx, check_mode):
                     if "[Lua] [WARNING]" in line and "folder detected" in line:
                         validations.append(line.split("[Lua] [WARNING]")[1].strip())
                     
+                    # 1. Check for C++ Mods
                     if "Starting C++ mod" in line:
                         m = extract_mod_name(line.split("'")[1])
                         mods_dict[m] = "(C++)"
+                    
+                    # 2. Check for Lua Mods
+                    elif "Starting Lua mod" in line:
+                        m = extract_mod_name(line.split("'")[1])
+                        if m not in mods_dict:
+                            mods_dict[m] = "(Lua)"
+                        
+                    # 3. Check for SDF Mods
                     elif "SDF folder found in mod" in line:
                         m = re.search(r"found in mod ([a-zA-Z0-9_\-\.]+)", line)
-                        if m: mods_dict[m.group(1)] = "(SDF)"
+                        if m: 
+                            mod_name = m.group(1).strip()
+                            if mod_name not in mods_dict:
+                                mods_dict[mod_name] = "(SDF)"
+                    
+                    # 4. Fallback check for general initialization logs
                     elif "Mod '" in line and "has enabled" in line:
                         m = extract_mod_name(line.split("'")[1])
-                        if m not in mods_dict: mods_dict[m] = "(Lua or C++)"
-                    
-                    lua_match = re.search(r"\[Lua\]\s?\[([^\]]+)\]", line)
-                    if lua_match:
-                        m = extract_mod_name(lua_match.group(1))
-                        if m.upper() not in ["STATUS", "INFO", "LUA", "MOD", "WARNING"] and m not in mods_dict:
-                            mods_dict[m] = "(Lua)"
+                        if m not in mods_dict: 
+                            mods_dict[m] = "(Lua or C++)"
                 
-                msg = f"**Environment:** Subnautica 2 (UE4SS {version})\n**Path:** `{install_path}`"
-                if "3.0.1" not in version: msg += sn2_update_notice
+                msg = f"**Environment:** Subnautica 2 (UE4SS v{version})\n**Path:** `{install_path}`"
+                if "3.0.1" not in version: msg += sn2_ue_notice
                 if source_code_found: msg += "\n\n⚠️ **Source Code Detected:** Detected `.cs` files. Ensure you have installed the *compiled* mod (`.dll`)."
                 await ctx.send(msg)
                 await send_mod_list(ctx, mods_dict, "Detected Mods", validations)
@@ -122,12 +139,10 @@ async def process_log(ctx, check_mode):
             bepinex_version_str = None
             nautilus_version_str = None
 
-            # Helper function to convert version strings into numeric lists for safe comparison
             def parse_version(v_str):
                 if not v_str: return []
                 return [int(x) for x in v_str.replace(",", ".").split(".") if x.strip().isdigit()]
 
-            # Parse lines for mods and framework versions safely
             for line in content.splitlines():
                 if "Loading [" in line and "]" in line:
                     try:
@@ -137,28 +152,25 @@ async def process_log(ctx, check_mode):
                     except IndexError:
                         continue
 
-                # Detect BepInEx Version Line
                 if "BepInEx" in line and "stable" in line.lower() and not bepinex_version_str:
                     for word in line.split():
                         if any(c.isdigit() for c in word) and "." in word:
                             bepinex_version_str = word.strip("()[]")
                             break
 
-                # Detect Nautilus Version Line
                 if "Loading [Nautilus" in line:
                     try:
                         nautilus_version_str = line.split("Nautilus")[1].split("]")[0].strip()
                     except IndexError:
                         pass
 
-            # Target baseline checks
+            # FIXED: Assigned targets to resolve the syntax error
             target_bepinex = [5, 4, 23, 5]
             target_nautilus = [1, 0, 0, 51]
 
             b_ver = parse_version(bepinex_version_str)
             n_ver = parse_version(nautilus_version_str)
 
-            # Build custom warnings if versions are low
             notices = []
             if b_ver and b_ver < target_bepinex:
                 notices.append(f"⚠️ BepInEx is outdated ({bepinex_version_str or 'Unknown'}). Update to 5.4.23.5 or newer.")
